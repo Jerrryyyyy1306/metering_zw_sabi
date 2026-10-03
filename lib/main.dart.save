@@ -1,0 +1,3080 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
+const String apiUrl = 'http://YOUR_KALI_IP:3000';
+
+const String companyName = 'New Sahara Ventures';
+const String siteName = 'Sabi 5.6MW Plant';
+const String zimbabweTimezone = 'Africa/Harare';
+
+const int inverterCount = 16;
+
+const List<int> meteringHours = [
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+];
+
+void main() {
+  tz.initializeTimeZones();
+  tz.setLocalLocation(tz.getLocation(zimbabweTimezone));
+
+  runApp(const MeteringZW());
+}
+
+class MeteringZW extends StatelessWidget {
+  const MeteringZW({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Metering ZW',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0B5CAD),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+      ),
+      home: const LoginPage(),
+    );
+  }
+}
+
+/* ============================================================
+   UTILITIES
+============================================================ */
+
+String formatDate(DateTime date) {
+  return '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+}
+
+String formatTime(DateTime date) {
+  return '${date.hour.toString().padLeft(2, '0')}:'
+      '${date.minute.toString().padLeft(2, '0')}';
+}
+
+String twoDecimals(dynamic value) {
+  final number = double.tryParse(value.toString()) ?? 0;
+  return number.toStringAsFixed(2);
+}
+
+DateTime zimNow() {
+  return tz.TZDateTime.now(
+    tz.getLocation(zimbabweTimezone),
+  );
+}
+
+void showSnack(BuildContext context, String message) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(message)),
+  );
+}
+
+/* ============================================================
+   API SERVICE
+============================================================ */
+
+class ApiService {
+  static Map<String, String> headers(String? token) {
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
+
+  static Future<http.Response> login(
+    String email,
+    String password,
+  ) {
+    return http.post(
+      Uri.parse('$apiUrl/api/auth/login'),
+      headers: headers(null),
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+      }),
+    );
+  }
+
+  static Future<http.Response> register(
+    String name,
+    String email,
+    String password,
+  ) {
+    return http.post(
+      Uri.parse('$apiUrl/api/auth/register'),
+      headers: headers(null),
+      body: jsonEncode({
+        'full_name': name,
+        'email': email,
+        'password': password,
+        'company': companyName,
+        'site': siteName,
+      }),
+    );
+  }
+
+  static Future<http.Response> getDashboard(
+    String token,
+  ) {
+    return http.get(
+      Uri.parse(
+        '$apiUrl/api/dashboard'
+        '?company=${Uri.encodeComponent(companyName)}'
+        '&site=${Uri.encodeComponent(siteName)}',
+      ),
+      headers: headers(token),
+    );
+  }
+
+  static Future<http.Response> getMetering(
+    String token,
+    String date,
+  ) {
+    return http.get(
+      Uri.parse(
+        '$apiUrl/api/metering'
+        '?site=${Uri.encodeComponent(siteName)}'
+        '&date=$date',
+      ),
+      headers: headers(token),
+    );
+  }
+
+  static Future<http.Response> getPreviousReading(
+    String token,
+    String date,
+    int hour,
+  ) {
+    return http.get(
+      Uri.parse(
+        '$apiUrl/api/metering/previous'
+        '?site=${Uri.encodeComponent(siteName)}'
+        '&date=$date'
+        '&hour=$hour',
+      ),
+      headers: headers(token),
+    );
+  }
+
+  static Future<http.Response> saveMeterReading({
+    required String token,
+    required String date,
+    required int hour,
+    required double currentReading,
+  }) {
+    return http.post(
+      Uri.parse('$apiUrl/api/metering'),
+      headers: headers(token),
+      body: jsonEncode({
+        'company': companyName,
+        'site': siteName,
+        'date': date,
+        'hour': hour,
+        'current_reading': currentReading,
+        'timezone': zimbabweTimezone,
+      }),
+    );
+  }
+
+  static Future<http.Response> getInverters(
+    String token,
+    String date,
+  ) {
+    return http.get(
+      Uri.parse(
+        '$apiUrl/api/inverters'
+        '?site=${Uri.encodeComponent(siteName)}'
+        '&date=$date',
+      ),
+      headers: headers(token),
+    );
+  }
+
+  static Future<http.Response> saveInverterReadings({
+    required String token,
+    required String date,
+    required List<Map<String, dynamic>> readings,
+  }) {
+    return http.post(
+      Uri.parse('$apiUrl/api/inverters'),
+      headers: headers(token),
+      body: jsonEncode({
+        'company': companyName,
+        'site': siteName,
+        'date': date,
+        'timezone': zimbabweTimezone,
+        'readings': readings,
+      }),
+    );
+  }
+
+  static Future<http.Response> getReports({
+    required String token,
+    required String from,
+    required String to,
+  }) {
+    return http.get(
+      Uri.parse(
+        '$apiUrl/api/reports'
+        '?site=${Uri.encodeComponent(siteName)}'
+        '&from=$from'
+        '&to=$to',
+      ),
+      headers: headers(token),
+    );
+  }
+
+  static Future<http.Response> getAnalytics({
+    required String token,
+    required String from,
+    required String to,
+  }) {
+    return http.get(
+      Uri.parse(
+        '$apiUrl/api/analytics'
+        '?site=${Uri.encodeComponent(siteName)}'
+        '&from=$from'
+        '&to=$to',
+      ),
+      headers: headers(token),
+    );
+  }
+}
+
+/* ============================================================
+   LOGIN
+============================================================ */
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool loading = false;
+
+  Future<void> login() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      showSnack(context, 'Enter email and password.');
+      return;
+    }
+
+    setState(() => loading = true);
+
+    try {
+      final response = await ApiService.login(
+        email,
+        password,
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DashboardShell(
+              token: data['token'],
+              user: data['user'] ?? {},
+            ),
+          ),
+        );
+      } else {
+        showSnack(
+          context,
+          data['message'] ?? 'Login failed.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        showSnack(
+          context,
+          'Unable to connect to the server.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 450,
+            ),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.electric_meter,
+                  size: 85,
+                  color: Color(0xFF0B5CAD),
+                ),
+
+                const SizedBox(height: 15),
+
+                const Text(
+                  'Metering ZW',
+                  style: TextStyle(
+                    fontSize: 34,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+
+                const SizedBox(height: 5),
+
+                const Text(
+                  'New Sahara Ventures',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
+                  ),
+                ),
+
+                const SizedBox(height: 35),
+
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.email),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+
+                const SizedBox(height: 15),
+
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: Icon(Icons.lock),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: loading ? null : login,
+                    child: loading
+                        ? const CircularProgressIndicator()
+                        : const Text('LOGIN'),
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                TextButton(
+                  onPressed: loading
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const RegistrationPage(),
+                            ),
+                          );
+                        },
+                  child: const Text(
+                    'Create Account',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* ============================================================
+   REGISTRATION
+============================================================ */
+
+class RegistrationPage extends StatefulWidget {
+  const RegistrationPage({super.key});
+
+  @override
+  State<RegistrationPage> createState() =>
+      _RegistrationPageState();
+}
+
+class _RegistrationPageState
+    extends State<RegistrationPage> {
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool loading = false;
+
+  Future<void> register() async {
+    if (nameController.text.trim().isEmpty ||
+        emailController.text.trim().isEmpty ||
+        passwordController.text.isEmpty) {
+      showSnack(context, 'Complete all fields.');
+      return;
+    }
+
+    setState(() => loading = true);
+
+    try {
+      final response = await ApiService.register(
+        nameController.text.trim(),
+        emailController.text.trim(),
+        passwordController.text,
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 201) {
+        showSnack(
+          context,
+          'Account created successfully.',
+        );
+
+        Navigator.pop(context);
+      } else {
+        showSnack(
+          context,
+          data['message'] ?? 'Registration failed.',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        showSnack(
+          context,
+          'Unable to connect to the server.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Register'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            const Icon(
+              Icons.person_add,
+              size: 70,
+              color: Color(0xFF0B5CAD),
+            ),
+
+            const SizedBox(height: 20),
+
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                prefixIcon: Icon(Icons.person),
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 15),
+
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                prefixIcon: Icon(Icons.email),
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 15),
+
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                prefixIcon: Icon(Icons.lock),
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 15),
+
+            const ListTile(
+              leading: Icon(Icons.business),
+              title: Text('Company'),
+              subtitle: Text(companyName),
+            ),
+
+            const ListTile(
+              leading: Icon(Icons.location_on),
+              title: Text('Site'),
+              subtitle: Text(siteName),
+            ),
+
+            const SizedBox(height: 15),
+
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: loading ? null : register,
+                child: loading
+                    ? const CircularProgressIndicator()
+                    : const Text('REGISTER'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/* ============================================================
+   MAIN DASHBOARD SHELL
+============================================================ */
+
+class DashboardShell extends StatefulWidget {
+  final String token;
+  final Map<String, dynamic> user;
+
+  const DashboardShell({
+    super.key,
+    required this.token,
+    required this.user,
+  });
+
+  @override
+  State<DashboardShell> createState() =>
+      _DashboardShellState();
+}
+
+class _DashboardShellState
+    extends State<DashboardShell> {
+  int selectedIndex = 0;
+
+  late final List<Widget> pages;
+
+  @override
+  void initState() {
+    super.initState();
+
+    pages = [
+      DashboardHome(
+        token: widget.token,
+      ),
+      DailyMeteringPage(
+        token: widget.token,
+      ),
+      InverterReadingsPage(
+        token: widget.token,
+      ),
+      ReportsPage(
+        token: widget.token,
+      ),
+      AnalyticsPage(
+        token: widget.token,
+      ),
+    ];
+  }
+
+  void logout() {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const LoginPage(),
+      ),
+      (_) => false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          [
+            'Dashboard',
+            'Daily Metering',
+            'Inverter Readings',
+            'Reports',
+            'Analytics',
+          ][selectedIndex],
+        ),
+      ),
+
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: const BoxDecoration(
+                color: Color(0xFF0B5CAD),
+              ),
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.electric_meter,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  const Text(
+                    'Metering ZW',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 5),
+
+                  const Text(
+                    companyName,
+                    style: TextStyle(
+                      color: Colors.white70,
+                    ),
+                  ),
+
+                  const Text(
+                    siteName,
+                    style: TextStyle(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            _drawerItem(
+              Icons.dashboard,
+              'Dashboard',
+              0,
+            ),
+
+            _drawerItem(
+              Icons.speed,
+              'Daily Metering',
+              1,
+            ),
+
+            _drawerItem(
+              Icons.solar_power,
+              'Inverter Readings',
+              2,
+            ),
+
+            const Divider(),
+
+            _drawerItem(
+              Icons.assessment,
+              'Reports',
+              3,
+            ),
+
+            _drawerItem(
+              Icons.analytics,
+              'Analytics',
+              4,
+            ),
+
+            const Divider(),
+
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Logout'),
+              onTap: logout,
+            ),
+          ],
+        ),
+      ),
+
+      body: pages[selectedIndex],
+    );
+  }
+
+  Widget _drawerItem(
+    IconData icon,
+    String title,
+    int index,
+  ) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      selected: selectedIndex == index,
+      onTap: () {
+        setState(() {
+          selectedIndex = index;
+        });
+
+        Navigator.pop(context);
+      },
+    );
+  }
+}
+
+/* ============================================================
+   DASHBOARD HOME
+============================================================ */
+
+class DashboardHome extends StatefulWidget {
+  final String token;
+
+  const DashboardHome({
+    super.key,
+    required this.token,
+  });
+
+  @override
+  State<DashboardHome> createState() =>
+      _DashboardHomeState();
+}
+
+class _DashboardHomeState
+    extends State<DashboardHome> {
+  bool loading = true;
+
+  double todayGeneration = 0;
+  double monthGeneration = 0;
+  double averageGeneration = 0;
+  double maximumGeneration = 0;
+  double minimumGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    loadDashboard();
+  }
+
+  Future<void> loadDashboard() async {
+    try {
+      final response =
+          await ApiService.getDashboard(widget.token);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        setState(() {
+          todayGeneration =
+              double.tryParse(
+                    '${data['today_generation'] ?? 0}',
+                  ) ??
+                  0;
+
+          monthGeneration =
+              double.tryParse(
+                    '${data['month_generation'] ?? 0}',
+                  ) ??
+                  0;
+
+          averageGeneration =
+              double.tryParse(
+                    '${data['average_generation'] ?? 0}',
+                  ) ??
+                  0;
+
+          maximumGeneration =
+              double.tryParse(
+                    '${data['maximum_generation'] ?? 0}',
+                  ) ??
+                  0;
+
+          minimumGeneration =
+              double.tryParse(
+                    '${data['minimum_generation'] ?? 0}',
+                  ) ??
+                  0;
+
+          loading = false;
+        });
+      } else {
+        setState(() => loading = false);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = zimNow();
+
+    return RefreshIndicator(
+      onRefresh: loadDashboard,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'Sabi 5.6MW Plant',
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+
+          const SizedBox(height: 4),
+
+          Text(
+            'Zimbabwe time: ${formatDate(now)} ${formatTime(now)}',
+            style: const TextStyle(
+              color: Colors.grey,
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          if (loading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
+
+          if (!loading) ...[
+            _statCard(
+              'Today',
+              '${todayGeneration.toStringAsFixed(2)} MWh',
+              Icons.today,
+              Colors.blue,
+            ),
+
+            _statCard(
+              'This Month',
+              '${monthGeneration.toStringAsFixed(2)} MWh',
+              Icons.calendar_month,
+              Colors.green,
+            ),
+
+            _statCard(
+              'Average Day',
+              '${averageGeneration.toStringAsFixed(2)} MWh',
+              Icons.show_chart,
+              Colors.orange,
+            ),
+
+            _statCard(
+              'Highest Day',
+              '${maximumGeneration.toStringAsFixed(2)} MWh',
+              Icons.arrow_upward,
+              Colors.green,
+            ),
+
+            _statCard(
+              'Lowest Day',
+              '${minimumGeneration.toStringAsFixed(2)} MWh',
+              Icons.arrow_downward,
+              Colors.red,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _statCard(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: color.withOpacity(.12),
+          child: Icon(
+            icon,
+            color: color,
+          ),
+        ),
+        title: Text(title),
+        subtitle: Text(
+          value,
+          style: const TextStyle(
+            fontSize: 21,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* ============================================================
+   DAILY METERING
+============================================================ */
+
+class DailyMeteringPage extends StatefulWidget {
+  final String token;
+
+  const DailyMeteringPage({
+    super.key,
+    required this.token,
+  });
+
+  @override
+  State<DailyMeteringPage> createState() =>
+      _DailyMeteringPageState();
+}
+
+class _DailyMeteringPageState
+    extends State<DailyMeteringPage> {
+  final Map<int, TextEditingController> controllers = {};
+
+  final Map<int, double?> previousReadings = {};
+
+  final Map<int, double?> currentReadings = {};
+
+  final Map<int, double?> generation = {};
+
+  bool loading = true;
+  bool saving = false;
+
+  DateTime selectedDate = zimNow();
+
+  @override
+  void initState() {
+    super.initState();
+
+    for (final hour in meteringHours) {
+      controllers[hour] = TextEditingController();
+    }
+
+    loadReadings();
+  }
+
+  String get dateString {
+    return formatDate(selectedDate);
+  }
+
+  Future<void> loadReadings() async {
+    setState(() => loading = true);
+
+    try {
+      final response = await ApiService.getMetering(
+        widget.token,
+        dateString,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        final readings =
+            List<Map<String, dynamic>>.from(
+          data['readings'] ?? [],
+        );
+
+        for (final reading in readings) {
+          final hour =
+              int.tryParse('${reading['hour']}');
+
+          if (hour == null ||
+              !controllers.containsKey(hour)) {
+            continue;
+          }
+
+          final current =
+              double.tryParse(
+            '${reading['current_reading']}',
+          );
+
+          final previous =
+              double.tryParse(
+            '${reading['previous_reading']}',
+          );
+
+          controllers[hour]!.text =
+              current?.toString() ?? '';
+
+          currentReadings[hour] = current;
+          previousReadings[hour] = previous;
+
+          if (current != null && previous != null) {
+            generation[hour] = current - previous;
+          }
+        }
+      }
+
+      await loadPreviousReadings();
+    } catch (_) {
+      // API may not have data yet.
+    }
+
+    if (mounted) {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> loadPreviousReadings() async {
+    for (final hour in meteringHours) {
+      if (currentReadings[hour] != null) {
+        continue;
+      }
+
+      try {
+        final response =
+            await ApiService.getPreviousReading(
+          widget.token,
+          dateString,
+          hour,
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+
+          final previous =
+              double.tryParse(
+            '${data['previous_reading'] ?? ''}',
+          );
+
+          previousReadings[hour] = previous;
+        }
+      } catch (_) {}
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  Future<void> saveHour(int hour) async {
+    final controller = controllers[hour]!;
+
+    final current =
+        double.tryParse(controller.text.trim());
+
+    if (current == null) {
+      showSnack(
+        context,
+        'Enter a valid reading for ${hour.toString().padLeft(2, '0')}:00.',
+      );
+      return;
+    }
+
+    final previous = previousReadings[hour];
+
+    if (previous != null && current < previous) {
+      showSnack(
+        context,
+        'Current reading cannot be lower than previous reading.',
+      );
+      return;
+    }
+
+    setState(() => saving = true);
+
+    try {
+      final response =
+          await ApiService.saveMeterReading(
+        token: widget.token,
+        date: dateString,
+        hour: hour,
+        currentReading: current,
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 ||
+          response.statusCode == 201) {
+        currentReadings[hour] = current;
+
+        if (previous != null) {
+          generation[hour] = current - previous;
+        }
+
+        showSnack(
+          context,
+          '${hour.toString().padLeft(2, '0')}:00 reading saved.',
+        );
+      } else {
+        final data = jsonDecode(response.body);
+
+        showSnack(
+          context,
+          data['message'] ?? 'Could not save reading.',
+        );
+      }
+    } catch (_) {
+      showSnack(
+        context,
+        'Server connection failed.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => saving = false);
+      }
+    }
+  }
+
+  double get totalGeneration {
+    return generation.values
+        .whereType<double>()
+        .fold(0, (a, b) => a + b);
+  }
+
+  Future<void> chooseDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+
+    if (picked == null) return;
+
+    setState(() {
+      selectedDate = tz.TZDateTime(
+        tz.getLocation(zimbabweTimezone),
+        picked.year,
+        picked.month,
+        picked.day,
+      );
+    });
+
+    for (final controller in controllers.values) {
+      controller.clear();
+    }
+
+    previousReadings.clear();
+    currentReadings.clear();
+    generation.clear();
+
+    await loadReadings();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in controllers.values) {
+      controller.dispose();
+    }
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: loadReadings,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Daily Metering',
+                      style: TextStyle(
+                        fontSize: 27,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      '$siteName • $dateString',
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: chooseDate,
+                icon: const Icon(
+                  Icons.calendar_month,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 15),
+
+          Card(
+            color: Colors.blue.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.info_outline,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '07:00 automatically uses the previous '
+                      'day 18:00 current reading.',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 15),
+
+          if (loading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
+
+          if (!loading)
+            ...meteringHours.map(
+              (hour) => _hourCard(hour),
+            ),
+
+          const SizedBox(height: 10),
+
+          Card(
+            color: Colors.green.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  const Text(
+                    'Total Generation',
+                    style: TextStyle(
+                      fontSize: 18,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${totalGeneration.toStringAsFixed(2)} MWh',
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _hourCard(int hour) {
+    final previous = previousReadings[hour];
+    final produced = generation[hour];
+
+    final label =
+        '${hour.toString().padLeft(2, '0')}:00';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _readingBox(
+                    'Previous',
+                    previous == null
+                        ? 'Automatic'
+                        : '${previous.toStringAsFixed(2)} MWh',
+                  ),
+                ),
+
+                const SizedBox(width: 10),
+
+                Expanded(
+                  child: TextField(
+                    controller: controllers[hour],
+                    keyboardType:
+                        const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Current',
+                      suffixText: 'MWh',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    produced == null
+                        ? 'Generation: —'
+                        : 'Generation: '
+                            '${produced.toStringAsFixed(2)} MWh',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: produced == null
+                          ? Colors.grey
+                          : Colors.green,
+                    ),
+                  ),
+                ),
+
+                ElevatedButton(
+                  onPressed: saving
+                      ? null
+                      : () => saveHour(hour),
+                  child: const Text('SAVE'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _readingBox(
+    String title,
+    String value,
+  ) {
+    return Container(
+      height: 58,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: Colors.grey.shade400,
+        ),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/* ============================================================
+   INVERTER READINGS
+============================================================ */
+
+class InverterReadingsPage extends StatefulWidget {
+  final String token;
+
+  const InverterReadingsPage({
+    super.key,
+    required this.token,
+  });
+
+  @override
+  State<InverterReadingsPage> createState() =>
+      _InverterReadingsPageState();
+}
+
+class _InverterReadingsPageState
+    extends State<InverterReadingsPage> {
+  final List<TextEditingController> controllers = [];
+
+  DateTime selectedDate = zimNow();
+
+  bool loading = true;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    for (int i = 0; i < inverterCount; i++) {
+      controllers.add(
+        TextEditingController(),
+      );
+    }
+
+    loadReadings();
+  }
+
+  String get dateString =>
+      formatDate(selectedDate);
+
+  Future<void> loadReadings() async {
+    setState(() => loading = true);
+
+    try {
+      final response =
+          await ApiService.getInverters(
+        widget.token,
+        dateString,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        final readings =
+            List<Map<String, dynamic>>.from(
+          data['readings'] ?? [],
+        );
+
+        for (final reading in readings) {
+          final number =
+              int.tryParse(
+            '${reading['inverter_number']}',
+          );
+
+          if (number == null ||
+              number < 1 ||
+              number > inverterCount) {
+            continue;
+          }
+
+          controllers[number - 1].text =
+              '${reading['reading'] ?? ''}';
+        }
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> saveReadings() async {
+    final readings = <Map<String, dynamic>>[];
+
+    for (int i = 0; i < inverterCount; i++) {
+      final value =
+          double.tryParse(
+        controllers[i].text.trim(),
+      );
+
+      if (value == null) {
+        showSnack(
+          context,
+          'Enter a valid reading for Inverter ${i + 1}.',
+        );
+        return;
+      }
+
+      if (value < 0) {
+        showSnack(
+          context,
+          'Inverter readings cannot be negative.',
+        );
+        return;
+      }
+
+      readings.add({
+        'inverter_number': i + 1,
+        'reading': value,
+      });
+    }
+
+    setState(() => saving = true);
+
+    try {
+      final response =
+          await ApiService.saveInverterReadings(
+        token: widget.token,
+        date: dateString,
+        readings: readings,
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 ||
+          response.statusCode == 201) {
+        showSnack(
+          context,
+          'All 16 inverter readings saved.',
+        );
+      } else {
+        final data = jsonDecode(response.body);
+
+        showSnack(
+          context,
+          data['message'] ?? 'Could not save readings.',
+        );
+      }
+    } catch (_) {
+      showSnack(
+        context,
+        'Server connection failed.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => saving = false);
+      }
+    }
+  }
+
+  Future<void> chooseDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+
+    if (picked == null) return;
+
+    selectedDate = tz.TZDateTime(
+      tz.getLocation(zimbabweTimezone),
+      picked.year,
+      picked.month,
+      picked.day,
+    );
+
+    await loadReadings();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in controllers) {
+      controller.dispose();
+    }
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Inverter Readings',
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: chooseDate,
+              icon: const Icon(
+                Icons.calendar_month,
+              ),
+            ),
+          ],
+        ),
+
+        Text(
+          'End-of-day readings • $dateString',
+        ),
+
+        const SizedBox(height: 20),
+
+        if (loading)
+          const Center(
+            child: CircularProgressIndicator(),
+          ),
+
+        if (!loading)
+          ...List.generate(
+            inverterCount,
+            (index) => Card(
+              margin: const EdgeInsets.only(
+                bottom: 10,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: TextField(
+                  controller: controllers[index],
+                  keyboardType:
+                      const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    labelText:
+                        'Inverter ${index + 1}',
+                    prefixIcon: const Icon(
+                      Icons.solar_power,
+                    ),
+                    suffixText: 'MWh',
+                    border:
+                        const OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        const SizedBox(height: 10),
+
+        SizedBox(
+          height: 52,
+          child: ElevatedButton.icon(
+            onPressed: saving ? null : saveReadings,
+            icon: const Icon(Icons.save),
+            label: saving
+                ? const CircularProgressIndicator()
+                : const Text(
+                    'SAVE ALL 16 INVERTERS',
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/* ============================================================
+   REPORTS
+============================================================ */
+
+class ReportsPage extends StatefulWidget {
+  final String token;
+
+  const ReportsPage({
+    super.key,
+    required this.token,
+  });
+
+  @override
+  State<ReportsPage> createState() =>
+      _ReportsPageState();
+}
+
+class _ReportsPageState
+    extends State<ReportsPage> {
+  DateTime from = zimNow().subtract(
+    const Duration(days: 30),
+  );
+
+  DateTime to = zimNow();
+
+  bool loading = false;
+
+  List<dynamic> days = [];
+
+  double total = 0;
+  double average = 0;
+  double highest = 0;
+  double lowest = 0;
+
+  Future<void> loadReport() async {
+    setState(() => loading = true);
+
+    try {
+      final response =
+          await ApiService.getReports(
+        token: widget.token,
+        from: formatDate(from),
+        to: formatDate(to),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        setState(() {
+          days = data['days'] ?? [];
+          total =
+              double.tryParse(
+                    '${data['total'] ?? 0}',
+                  ) ??
+                  0;
+          average =
+              double.tryParse(
+                    '${data['average'] ?? 0}',
+                  ) ??
+                  0;
+          highest =
+              double.tryParse(
+                    '${data['highest'] ?? 0}',
+                  ) ??
+                  0;
+          lowest =
+              double.tryParse(
+                    '${data['lowest'] ?? 0}',
+                  ) ??
+                  0;
+        });
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() => loading = false);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    loadReport();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: loadReport,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text(
+            'Generation Reports',
+            style: TextStyle(
+              fontSize: 27,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 15),
+
+          _summaryCard(
+            'Total Generation',
+            total,
+            Colors.blue,
+          ),
+
+          _summaryCard(
+            'Average Daily Generation',
+            average,
+            Colors.orange,
+          ),
+
+          _summaryCard(
+            'Highest Generation Day',
+            highest,
+            Colors.green,
+          ),
+
+          _summaryCard(
+            'Lowest Generation Day',
+            lowest,
+            Colors.red,
+          ),
+
+          const SizedBox(height: 15),
+
+          const Text(
+            'Daily Generation',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          if (loading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
+
+          ...days.map(
+            (day) {
+              final value =
+                  double.tryParse(
+                        '${day['generation'] ?? 0}',
+                      ) ??
+                      0;
+
+              return Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.calendar_today,
+                  ),
+                  title: Text(
+                    '${day['date'] ?? ''}',
+                  ),
+                  trailing: Text(
+                    '${value.toStringAsFixed(2)} MWh',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryCard(
+    String title,
+    double value,
+    Color color,
+  ) {
+    return Card(
+      child: ListTile(
+        leading: Icon(
+          Icons.bar_chart,
+          color: color,
+        ),
+        title: Text(title),
+        subtitle: Text(
+          '${value.toStringAsFixed(2)} MWh',
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* ============================================================
+   ANALYTICS
+============================================================ */
+
+class AnalyticsPage extends StatefulWidget {
+  final String token;
+
+  const AnalyticsPage({
+    super.key,
+    required this.token,
+  });
+
+  @override
+  State<AnalyticsPage> createState() =>
+      _AnalyticsPageState();
+}
+
+class _AnalyticsPageState
+    extends State<AnalyticsPage> {
+  bool loading = true;
+
+  double average = 0;
+  double highest = 0;
+  double lowest = 0;
+  double total = 0;
+
+  String highestDay = '—';
+  String lowestDay = '—';
+
+  int highDays = 0;
+  int lowDays = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    loadAnalytics();
+  }
+
+  Future<void> loadAnalytics() async {
+    final now = zimNow();
+
+    final from = formatDate(
+      now.subtract(
+        const Duration(days: 30),
+      ),
+    );
+
+    final to = formatDate(now);
+
+    try {
+      final response =
+          await ApiService.getAnalytics(
+        token: widget.token,
+        from: from,
+        to: to,
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        setState(() {
+          average =
+              double.tryParse(
+                    '${data['average'] ?? 0}',
+                  ) ??
+                  0;
+
+          highest =
+              double.tryParse(
+                    '${data['highest'] ?? 0}',
+                  ) ??
+                  0;
+
+          lowest =
+              double.tryParse(
+                    '${data['lowest'] ?? 0}',
+                  ) ??
+                  0;
+
+          total =
+              double.tryParse(
+                    '${data['total'] ?? 0}',
+                  ) ??
+                  0;
+
+          highestDay =
+              '${data['highest_day'] ?? '—'}';
+
+          lowestDay =
+              '${data['lowest_day'] ?? '—'}';
+
+          highDays =
+              int.tryParse(
+                    '${data['high_days'] ?? 0}',
+                  ) ??
+                  0;
+
+          lowDays =
+              int.tryParse(
+                    '${data['low_days'] ?? 0}',
+                  ) ??
+                  0;
+        });
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() => loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: loadAnalytics,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text(
+            'Power Generation Analytics',
+            style: TextStyle(
+              fontSize: 27,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 5),
+
+          const Text(
+            'Last 30 days',
+            style: TextStyle(
+              color: Colors.grey,
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          if (loading)
+            const Center(
+              child: CircularProgressIndicator(),
+            ),
+
+          _analyticsCard(
+            'Total Generation',
+            '${total.toStringAsFixed(2)} MWh',
+            Icons.bolt,
+            Colors.blue,
+          ),
+
+          _analyticsCard(
+            'Average Daily Generation',
+            '${average.toStringAsFixed(2)} MWh',
+            Icons.show_chart,
+            Colors.orange,
+          ),
+
+          _analyticsCard(
+            'Highest Generation',
+            '${highest.toStringAsFixed(2)} MWh',
+            Icons.trending_up,
+            Colors.green,
+          ),
+
+          ListTile(
+            title: const Text(
+              'Highest Generation Day',
+            ),
+            subtitle: Text(highestDay),
+            leading: const Icon(
+              Icons.arrow_upward,
+              color: Colors.green,
+            ),
+          ),
+
+          _analyticsCard(
+            'Lowest Generation',
+            '${lowest.toStringAsFixed(2)} MWh',
+            Icons.trending_down,
+            Colors.red,
+          ),
+
+          ListTile(
+            title: const Text(
+              'Lowest Generation Day',
+            ),
+            subtitle: Text(lowestDay),
+            leading: const Icon(
+              Icons.arrow_downward,
+              color: Colors.red,
+            ),
+          ),
+
+          const SizedBox(height: 15),
+
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(
+                    Icons.arrow_upward,
+                    color: Colors.green,
+                  ),
+                  title: const Text(
+                    'High Generation Days',
+                  ),
+                  trailing: Text(
+                    '$highDays days',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+
+                const Divider(height: 1),
+
+                ListTile(
+                  leading: const Icon(
+                    Icons.arrow_downward,
+                    color: Colors.red,
+                  ),
+                  title: const Text(
+                    'Low Generation Days',
+                  ),
+                  trailing: Text(
+                    '$lowDays days',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _analyticsCard(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return Card(
+      margin: const EdgeInsets.only(
+        bottom: 10,
+      ),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor:
+              color.withOpacity(.12),
+          child: Icon(
+            icon,
+            color: color,
+          ),
+        ),
+        title: Text(title),
+        subtitle: Text(
+          value,
+          style: const TextStyle(
+            fontSize: 21,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+}
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
+// CHANGE THIS to the IP address shown by: hostname -I
+const String apiUrl = 'http://192.168.1.249:3000';
+
+void main() {
+  runApp(const MeteringZW());
+}
+
+class MeteringZW extends StatelessWidget {
+  const MeteringZW({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Metering ZW',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1565C0),
+        ),
+        useMaterial3: true,
+      ),
+      home: const LoginPage(),
+    );
+  }
+}
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool loading = false;
+
+  Future<void> login() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      showMessage('Please enter your email and password.');
+      return;
+    }
+
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiUrl/api/auth/login'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'email': email,
+          'password': password,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CompanyPage(
+              token: data['token'],
+              user: data['user'],
+            ),
+          ),
+        );
+      } else {
+        showMessage(data['message'] ?? 'Login failed.');
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      showMessage(
+        'Could not connect to the Metering ZW server.\n'
+        'Make sure the API is running and your phone is on the same network.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
+    }
+  }
+
+  void showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 450),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.electric_meter,
+                    size: 80,
+                    color: Color(0xFF1565C0),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Metering ZW',
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text('Energy Metering Management'),
+                  const SizedBox(height: 40),
+
+                  TextField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      prefixIcon: Icon(Icons.email),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  TextField(
+                    controller: passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: Icon(Icons.lock),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: loading ? null : login,
+                      child: loading
+                          ? const SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text('LOGIN'),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  TextButton(
+                    onPressed: loading
+                        ? null
+                        : () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const RegistrationPage(),
+                              ),
+                            );
+                          },
+                    child: const Text('Create an account'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// REGISTRATION
+// ============================================================
+
+class RegistrationPage extends StatefulWidget {
+  const RegistrationPage({super.key});
+
+  @override
+  State<RegistrationPage> createState() => _RegistrationPageState();
+}
+
+class _RegistrationPageState extends State<RegistrationPage> {
+  final nameController = TextEditingController();
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool loading = false;
+
+  Future<void> register() async {
+    final name = nameController.text.trim();
+    final email = emailController.text.trim();
+    final password = passwordController.text;
+
+    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+      showMessage('Please complete all fields.');
+      return;
+    }
+
+    if (password.length < 6) {
+      showMessage('Password must be at least 6 characters.');
+      return;
+    }
+
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiUrl/api/auth/register'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'full_name': name,
+          'email': email,
+          'password': password,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 201) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Registration successful. Please log in.'),
+          ),
+        );
+
+        Navigator.pop(context);
+      } else {
+        showMessage(data['message'] ?? 'Registration failed.');
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      showMessage(
+        'Could not connect to the Metering ZW server.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
+    }
+  }
+
+  void showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Create Account'),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              const Icon(
+                Icons.person_add,
+                size: 70,
+                color: Color(0xFF1565C0),
+              ),
+
+              const SizedBox(height: 30),
+
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Full Name',
+                  prefixIcon: Icon(Icons.person),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              TextField(
+                controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  prefixIcon: Icon(Icons.email),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: Icon(Icons.lock),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: loading ? null : register,
+                  child: loading
+                      ? const SizedBox(
+                          height: 22,
+                          width: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text('REGISTER'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// COMPANY SELECTION
+// ============================================================
+
+class CompanyPage extends StatefulWidget {
+  final String token;
+  final Map<String, dynamic> user;
+
+  const CompanyPage({
+    super.key,
+    required this.token,
+    required this.user,
+  });
+
+  @override
+  State<CompanyPage> createState() => _CompanyPageState();
+}
+
+class _CompanyPageState extends State<CompanyPage> {
+  String? selectedCompany;
+
+  final companies = [
+    'Demo Energy Company',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Select Company'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Welcome, ${widget.user['full_name']}',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 30),
+
+            DropdownButtonFormField<String>(
+              value: selectedCompany,
+              decoration: const InputDecoration(
+                labelText: 'Company',
+                prefixIcon: Icon(Icons.business),
+                border: OutlineInputBorder(),
+              ),
+              items: companies.map((company) {
+                return DropdownMenuItem(
+                  value: company,
+                  child: Text(company),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  selectedCompany = value;
+                });
+              },
+            ),
+
+            const SizedBox(height: 24),
+
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: selectedCompany == null
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SitePage(
+                              token: widget.token,
+                              user: widget.user,
+                              companyName: selectedCompany!,
+                            ),
+                          ),
+                        );
+                      },
+                child: const Text('CONTINUE'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// SITE SELECTION
+// ============================================================
+
+class SitePage extends StatefulWidget {
+  final String token;
+  final Map<String, dynamic> user;
+  final String companyName;
+
+  const SitePage({
+    super.key,
+    required this.token,
+    required this.user,
+    required this.companyName,
+  });
+
+  @override
+  State<SitePage> createState() => _SitePageState();
+}
+
+class _SitePageState extends State<SitePage> {
+  String? selectedSite;
+
+  final sites = [
+    'Harare Site',
+    'Bulawayo Site',
+    'Mutare Site',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Select Site'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.companyName,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            DropdownButtonFormField<String>(
+              value: selectedSite,
+              decoration: const InputDecoration(
+                labelText: 'Site',
+                prefixIcon: Icon(Icons.location_on),
+                border: OutlineInputBorder(),
+              ),
+              items: sites.map((site) {
+                return DropdownMenuItem(
+                  value: site,
+                  child: Text(site),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  selectedSite = value;
+                });
+              },
+            ),
+
+            const SizedBox(height: 24),
+
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: selectedSite == null
+                    ? null
+                    : () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => DashboardPage(
+                              token: widget.token,
+                              user: widget.user,
+                              companyName: widget.companyName,
+                              siteName: selectedSite!,
+                            ),
+                          ),
+                        );
+                      },
+                child: const Text('ENTER SITE'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+class DashboardPage extends StatefulWidget {
+  final String token;
+  final Map<String, dynamic> user;
+  final String companyName;
+  final String siteName;
+
+  const DashboardPage({
+    super.key,
+    required this.token,
+    required this.user,
+    required this.companyName,
+    required this.siteName,
+  });
+
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  int selectedIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = [
+      DailyMeteringPage(
+        siteName: widget.siteName,
+      ),
+      InverterReadingsPage(
+        siteName: widget.siteName,
+      ),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.siteName),
+      ),
+
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: const BoxDecoration(
+                color: Color(0xFF1565C0),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.electric_meter,
+                    color: Colors.white,
+                    size: 45,
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  const Text(
+                    'Metering ZW',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 5),
+
+                  Text(
+                    widget.siteName,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            ListTile(
+              leading: const Icon(Icons.speed),
+              title: const Text('Daily Metering'),
+              selected: selectedIndex == 0,
+              onTap: () {
+                setState(() {
+                  selectedIndex = 0;
+                });
+
+                Navigator.pop(context);
+              },
+            ),
+
+            ListTile(
+              leading: const Icon(Icons.solar_power),
+              title: const Text('Inverter Readings'),
+              selected: selectedIndex == 1,
+              onTap: () {
+                setState(() {
+                  selectedIndex = 1;
+                });
+
+                Navigator.pop(context);
+              },
+            ),
+
+            const Divider(),
+
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Logout'),
+              onTap: () {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const LoginPage(),
+                  ),
+                  (_) => false,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+
+      body: pages[selectedIndex],
+    );
+  }
+}
+
+// ============================================================
+// DAILY METERING
+// ============================================================
+
+class DailyMeteringPage extends StatefulWidget {
+  final String siteName;
+
+  const DailyMeteringPage({
+    super.key,
+    required this.siteName,
+  });
+
+  @override
+  State<DailyMeteringPage> createState() => _DailyMeteringPageState();
+}
+
+class _DailyMeteringPageState extends State<DailyMeteringPage> {
+  final previousController = TextEditingController();
+  final currentController = TextEditingController();
+
+  double consumption = 0;
+
+  void calculate() {
+    final previous =
+        double.tryParse(previousController.text) ?? 0;
+
+    final current =
+        double.tryParse(currentController.text) ?? 0;
+
+    setState(() {
+      consumption = current - previous;
+    });
+  }
+
+  @override
+  void dispose() {
+    previousController.dispose();
+    currentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Daily Metering',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          Text(widget.siteName),
+
+          const SizedBox(height: 30),
+
+          TextField(
+            controller: previousController,
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+            ),
+            decoration: const InputDecoration(
+              labelText: 'Previous Meter Reading',
+              suffixText: 'MWh',
+              prefixIcon: Icon(Icons.history),
+              border: OutlineInputBorder(),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: currentController,
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+            ),
+            decoration: const InputDecoration(
+              labelText: 'Current Meter Reading',
+              suffixText: 'MWh',
+              prefixIcon: Icon(Icons.speed),
+              border: OutlineInputBorder(),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: calculate,
+              child: const Text('CALCULATE'),
+            ),
+          ),
+
+          const SizedBox(height: 30),
+
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Text(
+                    'Energy Consumed',
+                    style: TextStyle(
+                      fontSize: 18,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Text(
+                    '${consumption.toStringAsFixed(2)} MWh',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1565C0),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================
+// INVERTER READINGS
+// ============================================================
+
+class InverterReadingsPage extends StatelessWidget {
+  final String siteName;
+
+  const InverterReadingsPage({
+    super.key,
+    required this.siteName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Inverter Readings',
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          Text(siteName),
+
+          const SizedBox(height: 30),
+
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(
+                child: Text(
+                  'Inverter reading functionality coming next.',
+                  style: TextStyle(fontSize: 16),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
